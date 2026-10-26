@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compresseur Discord</title>
+<style>
+  :root {
+    --bg: #f2f3f5; --card: #ffffff; --text: #1e1f22; --muted: #5c5e66;
+    --accent: #5865f2; --accent-hover: #4752c4; --border: #dcdde1;
+    --ok: #23a55a; --err: #da373c; --track: #e3e5e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1e1f22; --card: #2b2d31; --text: #f2f3f5; --muted: #b5bac1;
+      --border: #3f4147; --track: #1e1f22;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1e1f22; --card: #2b2d31; --text: #f2f3f5; --muted: #b5bac1;
+    --border: #3f4147; --track: #1e1f22;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; justify-content: center; padding: 40px 16px;
+  }
+  main { width: 100%; max-width: 560px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  #drop {
+    border: 2px dashed var(--border); border-radius: 10px; padding: 32px 16px;
+    text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  #drop.over, #drop:hover { border-color: var(--accent); }
+  #drop strong { display: block; font-size: 16px; }
+  #drop span { color: var(--muted); font-size: 13px; word-break: break-all; }
+  label.field { display: block; margin-top: 18px; font-weight: 600; font-size: 13px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .presets button {
+    flex: 1 1 0; min-width: 90px; padding: 8px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border); background: transparent; color: var(--text); font: inherit;
+  }
+  .presets button small { display: block; color: var(--muted); font-size: 11px; }
+  .presets button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .custom { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .custom input {
+    width: 100px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--text); font: inherit;
+  }
+  .row { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 14px; }
+  #go {
+    margin-top: 20px; width: 100%; padding: 12px; border: 0; border-radius: 8px;
+    background: var(--accent); color: #fff; font: 600 15px system-ui, sans-serif; cursor: pointer;
+  }
+  #go:hover:not(:disabled) { background: var(--accent-hover); }
+  #go:disabled { opacity: .5; cursor: not-allowed; }
+  .bar { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; margin-top: 18px; }
+  .bar div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  #status { margin-top: 10px; font-size: 14px; color: var(--muted); min-height: 21px; }
+  #status.err { color: var(--err); }
+  #result { display: none; margin-top: 16px; }
+  #result video { width: 100%; border-radius: 8px; background: #000; max-height: 320px; }
+  #dl {
+    display: block; text-align: center; margin-top: 12px; padding: 12px; border-radius: 8px;
+    background: var(--ok); color: #fff; text-decoration: none; font-weight: 600;
+  }
+  .note { color: var(--muted); font-size: 12px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Compresseur vidéo pour Discord</h1>
+  <p class="sub">Tout se passe dans ton navigateur, rien n'est envoyé sur internet.</p>
+
+  <div class="card">
+    <div id="drop">
+      <strong>Glisse une vidéo ici</strong>
+      <span id="fname">ou clique pour en choisir une</span>
+    </div>
+    <input type="file" id="file" accept="video/*" hidden>
+
+    <label class="field">Taille max</label>
+    <div class="presets">
+      <button data-mb="10" class="on">10 Mo<small>Discord gratuit</small></button>
+      <button data-mb="50">50 Mo<small>Nitro Basic</small></button>
+      <button data-mb="500">500 Mo<small>Nitro</small></button>
+    </div>
+    <div class="custom">
+      <span style="font-size:13px;color:var(--muted)">Ou personnalisé :</span>
+      <input type="number" id="mb" min="1" step="1" value="10"> Mo
+    </div>
+
+    <label class="row"><input type="checkbox" id="mute"> Retirer le son (plus de place pour l'image)</label>
+
+    <button id="go" disabled>Compresser</button>
+    <div class="bar"><div id="prog"></div></div>
+    <div id="status"></div>
+
+    <div id="result">
+      <video id="preview" controls></video>
+      <a id="dl">Télécharger</a>
+    </div>
+  </div>
+
+  <p class="note">Fonctionne sur Chrome, Edge et Firefox récents (utilise WebCodecs).
+    Si la vidéo est trop longue pour la taille choisie, la qualité baissera beaucoup : coupe-la avant.</p>
+</main>
+
+<script type="module">
+import {
+  Input, Output, Conversion, ALL_FORMATS, BlobSource, BufferTarget, Mp4OutputFormat,
+} from 'https://cdn.jsdelivr.net/npm/mediabunny@1.62.0/+esm';
+
+const $ = (id) => document.getElementById(id);
+const drop = $('drop'), fileInput = $('file'), go = $('go'), mbInput = $('mb');
+let file = null;
+let outBlob = null;
+
+// Dans claude.ai, les liens de téléchargement sont bloqués : on passe par la capacité "downloads"
+let downloads = null;
+window.claude?.use?.('downloads').then((d) => { downloads = d; }).catch(() => {});
+$('dl').addEventListener('click', async (e) => {
+  if (!downloads || !outBlob) return; // hors claude.ai : le lien classique suffit
+  e.preventDefault();
+  try {
+    await downloads.save({ filename: $('dl').download, data: outBlob });
+  } catch (err) {
+    if (err?.code !== 'declined') setStatus('Téléchargement impossible : ' + (err?.message || err?.code), true);
+  }
+});
+
+// Discord compte en Mio ; on garde une marge pour le conteneur MP4 et les dépassements de l'encodeur
+const MiB = 1024 * 1024;
+
+drop.onclick = () => fileInput.click();
+fileInput.onchange = () => pick(fileInput.files[0]);
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); pick(e.dataTransfer.files[0]); };
+
+for (const b of document.querySelectorAll('.presets button')) {
+  b.onclick = () => { mbInput.value = b.dataset.mb; syncPresets(); };
+}
+mbInput.oninput = syncPresets;
+function syncPresets() {
+  for (const b of document.querySelectorAll('.presets button')) b.classList.toggle('on', b.dataset.mb === mbInput.value);
+}
+
+function pick(f) {
+  if (!f) return;
+  file = f;
+  $('fname').textContent = `${f.name} — ${(f.size / MiB).toFixed(1)} Mo`;
+  go.disabled = false;
+  $('result').style.display = 'none';
+  setStatus('');
+}
+
+function setStatus(msg, err = false) {
+  $('status').textContent = msg;
+  $('status').classList.toggle('err', err);
+}
+const setProg = (p) => { $('prog').style.width = `${Math.round(p * 100)}%`; };
+
+// Choisit une résolution raisonnable pour le débit disponible
+function pickHeight(videoBitrate, srcH) {
+  let h;
+  if (videoBitrate < 400e3) h = 360;
+  else if (videoBitrate < 900e3) h = 480;
+  else if (videoBitrate < 2.5e6) h = 720;
+  else h = 1080;
+  return Math.min(h, srcH);
+}
+const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+
+async function encode(videoTrack, srcW, srcH, videoBitrate, audioBitrate, mute, onProg) {
+  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+  const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
+  const h = even(pickHeight(videoBitrate, srcH));
+  const w = even(srcW * h / srcH);
+  const conversion = await Conversion.init({
+    input, output,
+    video: { codec: 'avc', width: w, height: h, fit: 'fill', bitrate: Math.round(videoBitrate), forceTranscode: true },
+    audio: mute ? { discard: true } : { codec: 'aac', bitrate: audioBitrate, numberOfChannels: 2, forceTranscode: true },
+  });
+  if (!conversion.isValid) {
+    throw new Error('Format non supporté par ton navigateur : ' +
+      conversion.discardedTracks.map((t) => t.reason).join(', '));
+  }
+  conversion.onProgress = onProg;
+  await conversion.execute();
+  return { buffer: output.target.buffer, w, h };
+}
+
+go.onclick = async () => {
+  const targetMB = parseFloat(mbInput.value);
+  if (!file || !(targetMB > 0)) return;
+  const mute = $('mute').checked;
+  go.disabled = true;
+  $('result').style.display = 'none';
+  setProg(0);
+
+  try {
+    const targetBytes = targetMB * MiB;
+    if (file.size <= targetBytes) {
+      setStatus(`Ta vidéo fait déjà moins de ${targetMB} Mo, pas besoin de la compresser.`);
+      go.disabled = false;
+      return;
+    }
+
+    setStatus('Analyse de la vidéo…');
+    const probe = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+    const videoTrack = await probe.getPrimaryVideoTrack();
+    if (!videoTrack) throw new Error('Aucune piste vidéo trouvée dans ce fichier.');
+    const duration = await probe.computeDuration();
+    const srcW = videoTrack.displayWidth, srcH = videoTrack.displayHeight;
+
+    const audioBitrate = mute ? 0 : (targetMB <= 10 ? 64e3 : 128e3);
+    let budget = targetBytes * 0.92; // marge de sécurité
+    let result;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const videoBitrate = (budget * 8) / duration - audioBitrate;
+      if (videoBitrate < 80e3) {
+        throw new Error(`Vidéo trop longue (${Math.round(duration)} s) pour tenir dans ${targetMB} Mo. Coupe-la ou choisis une taille plus grande.`);
+      }
+      const label = attempt === 1 ? 'Compression' : `Encore un peu trop gros, nouvel essai (${attempt}/3)`;
+      result = await encode(videoTrack, srcW, srcH, videoBitrate, audioBitrate, mute, (p) => {
+        setProg(p);
+        setStatus(`${label}… ${Math.round(p * 100)} %`);
+      });
+      if (result.buffer.byteLength <= targetBytes) break;
+      // L'encodeur a dépassé : on réduit le budget proportionnellement
+      budget *= (targetBytes * 0.95) / result.buffer.byteLength;
+    }
+
+    const blob = new Blob([result.buffer], { type: 'video/mp4' });
+    outBlob = blob;
+    const url = URL.createObjectURL(blob);
+    const sizeMB = (blob.size / MiB).toFixed(1);
+    $('preview').src = url;
+    $('dl').href = url;
+    $('dl').download = file.name.replace(/\.[^.]+$/, '') + '_discord.mp4';
+    $('dl').textContent = `Télécharger (${sizeMB} Mo, ${result.w}×${result.h})`;
+    $('result').style.display = 'block';
+    setProg(1);
+    if (blob.size > targetBytes) setStatus(`Fait, mais ${sizeMB} Mo : ça dépasse encore un peu. Essaie de couper la vidéo.`, true);
+    else setStatus(`Terminé : ${(file.size / MiB).toFixed(1)} Mo → ${sizeMB} Mo`);
+  } catch (e) {
+    console.error(e);
+    setStatus(e.message || String(e), true);
+  } finally {
+    go.disabled = false;
+  }
+};
+</script>
+</body>
+</html>

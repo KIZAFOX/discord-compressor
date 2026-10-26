@@ -175,7 +175,20 @@ function pickHeight(videoBitrate, srcH) {
 }
 const even = (n) => Math.max(2, Math.round(n / 2) * 2);
 
-async function encode(videoTrack, srcW, srcH, videoBitrate, audioBitrate, mute, onProg) {
+// L'encodeur AAC de Windows n'accepte que 96 / 128 / 160 / 192 kb/s : en dessous il refuse
+// et l'audio est silencieusement supprimé. On vérifie donc la config, avec Opus en secours.
+async function pickAudio(sampleRate, targetMB) {
+  const sr = sampleRate === 44100 ? 44100 : 48000;
+  const aacBitrate = targetMB <= 10 ? 96e3 : 128e3;
+  const ok = async (codec, bitrate) =>
+    (await AudioEncoder.isConfigSupported({ codec, sampleRate: sr, numberOfChannels: 2, bitrate }).catch(() => ({})))?.supported;
+  if (await ok('mp4a.40.2', aacBitrate)) return { codec: 'aac', bitrate: aacBitrate, sampleRate: sr };
+  const opusBitrate = targetMB <= 10 ? 64e3 : 128e3;
+  if (await ok('opus', opusBitrate)) return { codec: 'opus', bitrate: opusBitrate, sampleRate: 48000 };
+  return null;
+}
+
+async function encode(videoTrack, srcW, srcH, videoBitrate, audio, onProg) {
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
   const h = even(pickHeight(videoBitrate, srcH));
@@ -183,15 +196,16 @@ async function encode(videoTrack, srcW, srcH, videoBitrate, audioBitrate, mute, 
   const conversion = await Conversion.init({
     input, output,
     video: { codec: 'avc', width: w, height: h, fit: 'fill', bitrate: Math.round(videoBitrate), forceTranscode: true },
-    audio: mute ? { discard: true } : { codec: 'aac', bitrate: audioBitrate, numberOfChannels: 2, forceTranscode: true },
+    audio: audio ? { ...audio, numberOfChannels: 2, forceTranscode: true } : { discard: true },
   });
   if (!conversion.isValid) {
     throw new Error('Format non supporté par ton navigateur : ' +
       conversion.discardedTracks.map((t) => t.reason).join(', '));
   }
+  const audioLost = !!audio && conversion.discardedTracks.some((t) => t.track.type === 'audio');
   conversion.onProgress = onProg;
   await conversion.execute();
-  return { buffer: output.target.buffer, w, h };
+  return { buffer: output.target.buffer, w, h, audioLost };
 }
 
 go.onclick = async () => {
@@ -217,7 +231,9 @@ go.onclick = async () => {
     const duration = await probe.computeDuration();
     const srcW = videoTrack.displayWidth, srcH = videoTrack.displayHeight;
 
-    const audioBitrate = mute ? 0 : (targetMB <= 10 ? 64e3 : 128e3);
+    const audioTrack = mute ? null : await probe.getPrimaryAudioTrack();
+    const audio = audioTrack ? await pickAudio(audioTrack.sampleRate, targetMB) : null;
+    const audioBitrate = audio ? audio.bitrate : 0;
     let budget = targetBytes * 0.92; // marge de sécurité
     let result;
 
@@ -227,7 +243,7 @@ go.onclick = async () => {
         throw new Error(`Vidéo trop longue (${Math.round(duration)} s) pour tenir dans ${targetMB} Mo. Coupe-la ou choisis une taille plus grande.`);
       }
       const label = attempt === 1 ? 'Compression' : `Encore un peu trop gros, nouvel essai (${attempt}/3)`;
-      result = await encode(videoTrack, srcW, srcH, videoBitrate, audioBitrate, mute, (p) => {
+      result = await encode(videoTrack, srcW, srcH, videoBitrate, audio, (p) => {
         setProg(p);
         setStatus(`${label}… ${Math.round(p * 100)} %`);
       });
@@ -246,7 +262,8 @@ go.onclick = async () => {
     $('dl').textContent = `Télécharger (${sizeMB} Mo, ${result.w}×${result.h})`;
     $('result').style.display = 'block';
     setProg(1);
-    if (blob.size > targetBytes) setStatus(`Fait, mais ${sizeMB} Mo : ça dépasse encore un peu. Essaie de couper la vidéo.`, true);
+    if (audioTrack && (!audio || result.audioLost)) setStatus('Attention : ton navigateur ne sait pas encoder le son, la vidéo est muette. Essaie avec Chrome ou Edge.', true);
+    else if (blob.size > targetBytes) setStatus(`Fait, mais ${sizeMB} Mo : ça dépasse encore un peu. Essaie de couper la vidéo.`, true);
     else setStatus(`Terminé : ${(file.size / MiB).toFixed(1)} Mo → ${sizeMB} Mo`);
   } catch (e) {
     console.error(e);
